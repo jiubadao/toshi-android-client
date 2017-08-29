@@ -74,10 +74,10 @@ public class ToshiManager {
         if (this.wallet != null && this.areManagersInitialised) {
             return Completable.complete();
         }
-
         return new HDWallet()
                 .getOrCreateWallet()
                 .doOnSuccess(this::setWallet)
+                .doOnSuccess(__ -> SharedPrefsUtil.setHasOnboarded(false)) // When creating a new wallet, set HAS_ONBOARDED to false
                 .flatMapCompletable(__ -> initManagers())
                 .doOnError(__ -> clearUserData())
                 .subscribeOn(Schedulers.from(this.singleExecutor));
