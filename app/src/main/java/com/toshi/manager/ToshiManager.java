@@ -30,6 +30,7 @@ import java.util.concurrent.Executors;
 
 import io.realm.Realm;
 import io.realm.RealmConfiguration;
+import rx.Completable;
 import rx.Single;
 import rx.schedulers.Schedulers;
 import rx.subjects.BehaviorSubject;
@@ -65,36 +66,39 @@ public class ToshiManager {
 
         tryInit()
                 .subscribe(
-                        __ -> {},
+                        () -> {},
                         ex -> LogUtil.i(getClass(), "Early init failed."));
     }
 
-    public Single<ToshiManager> init() {
+    public Completable init() {
         if (this.wallet != null && this.areManagersInitialised) {
-            return Single.just(this);
+            return Completable.complete();
         }
 
         return new HDWallet()
                 .getOrCreateWallet()
                 .doOnSuccess(this::setWallet)
-                .flatMap(__ -> initManagers())
+                .flatMapCompletable(__ -> initManagers())
+                .doOnError(__ -> clearUserData())
                 .subscribeOn(Schedulers.from(this.singleExecutor));
     }
 
-    public Single<ToshiManager> init(final HDWallet wallet) {
+    public Completable init(final HDWallet wallet) {
         this.setWallet(wallet);
         return initManagers()
+                .doOnError(__ -> clearUserData())
                 .subscribeOn(Schedulers.from(this.singleExecutor));
     }
 
-    public Single<ToshiManager> tryInit() {
+    public Completable tryInit() {
         if (this.wallet != null && this.areManagersInitialised) {
-            return Single.just(this);
+            return Completable.complete();
         }
         return new HDWallet()
                 .getExistingWallet()
                 .doOnSuccess(this::setWallet)
-                .flatMap(__ -> initManagers())
+                .flatMapCompletable(__ -> initManagers())
+                .doOnError(__ -> clearUserData())
                 .subscribeOn(Schedulers.from(this.singleExecutor));
     }
 
@@ -103,19 +107,17 @@ public class ToshiManager {
         this.walletSubject.onNext(wallet);
     }
 
-    private Single<ToshiManager> initManagers() {
-        return Single.fromCallable(() -> {
-            if (!this.areManagersInitialised) {
-                initRealm();
-                this.balanceManager.init(this.wallet);
-                this.sofaMessageManager.init(this.wallet);
-                this.transactionManager.init(this.wallet);
-                this.userManager.init(this.wallet);
-                this.reputationManager = new ReputationManager();
-                this.areManagersInitialised = true;
-            }
-            return this;
-        });
+    private Completable initManagers() {
+        if (this.areManagersInitialised) return Completable.complete();
+        return Completable.fromAction(() -> {
+            initRealm();
+            this.transactionManager.init(this.wallet);
+            this.userManager.init(this.wallet);
+            this.reputationManager = new ReputationManager();
+        })
+        .andThen(this.balanceManager.init(this.wallet))
+        .andThen(this.sofaMessageManager.init(this.wallet))
+        .doOnCompleted(() -> this.areManagersInitialised = true);
     }
 
     private void initRealm() {
